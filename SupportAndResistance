@@ -1,0 +1,124 @@
+#region Using declarations
+using System;
+using NinjaTrader.Cbi;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript.StrategyAnalyzer;
+using NinjaTrader.Data;
+using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.Strategies;
+using System.ComponentModel; // Hinzugefügt
+using System.ComponentModel.DataAnnotations; // Hinzugefügt
+#endregion
+
+namespace NinjaTrader.NinjaScript.Strategies
+{
+    public class SupportResistanceStrategy : Strategy
+    {
+        #region Variables
+        private double atrMultiplierSL = 2.0; // ATR Multiplier for Stop Loss
+        private double atrMultiplierTP = 3.0; // ATR Multiplier for Take Profit
+        private double maxLossPercent = 1.0;  // Max loss per trade as a percentage of account size
+        private double trailingStopMultiplier = 1.5; // Trailing stop ATR multiplier
+        private int atrPeriod = 14; // ATR period
+        private double accountSize;
+        #endregion
+
+        #region Properties
+        [NinjaScriptProperty]
+        [Range(1, double.MaxValue)]
+        [Display(Name = "ATR Multiplier SL", Order = 1, GroupName = "Parameters")]
+        public double AtrMultiplierSL
+        { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(1, double.MaxValue)]
+        [Display(Name = "ATR Multiplier TP", Order = 2, GroupName = "Parameters")]
+        public double AtrMultiplierTP
+        { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(0.1, 100)]
+        [Display(Name = "Max Loss Percent", Order = 3, GroupName = "Parameters")]
+        public double MaxLossPercent
+        { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(1, double.MaxValue)]
+        [Display(Name = "Trailing Stop Multiplier", Order = 4, GroupName = "Parameters")]
+        public double TrailingStopMultiplier
+        { get; set; }
+        #endregion
+
+        protected override void OnStateChange()
+        {
+            if (State == State.SetDefaults)
+            {
+                Description = @"Strategy using support and resistance levels with ATR-based stop loss and take profit, and a trailing stop.";
+                Name = "SupportResistanceStrategy";
+                Calculate = Calculate.OnEachTick;
+                IsOverlay = false;
+                AddDataSeries(Data.BarsPeriodType.Day, 1);
+                AtrMultiplierSL = atrMultiplierSL;
+                AtrMultiplierTP = atrMultiplierTP;
+                MaxLossPercent = maxLossPercent;
+                TrailingStopMultiplier = trailingStopMultiplier;
+            }
+            else if (State == State.Configure)
+            {
+                AddChartIndicator(ATR(atrPeriod));
+            }
+            else if (State == State.DataLoaded)
+            {
+                accountSize = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+            }
+        }
+
+        protected override void OnBarUpdate()
+        {
+            if (BarsInProgress != 0)
+                return;
+
+            double atrValue = ATR(atrPeriod)[0];
+            double maxRisk = accountSize * (MaxLossPercent / 100);
+            int positionSize = (int)(maxRisk / (atrValue * AtrMultiplierSL));
+
+            // Define support and resistance levels (example logic)
+            double supportLevel = Low[1];
+            double resistanceLevel = High[1];
+
+            // Entry conditions
+            if (CrossAbove(Close, resistanceLevel, 1))
+            {
+                EnterLong(positionSize, "LongTrade");
+            }
+            else if (CrossBelow(Close, supportLevel, 1))
+            {
+                EnterShort(positionSize, "ShortTrade");
+            }
+
+            // Exit conditions
+            if (Position.MarketPosition == MarketPosition.Long)
+            {
+                double stopLossPrice = Position.AveragePrice - (atrValue * AtrMultiplierSL);
+                double takeProfitPrice = Position.AveragePrice + (atrValue * AtrMultiplierTP);
+                SetStopLoss("LongTrade", CalculationMode.Price, stopLossPrice, false);
+                SetProfitTarget("LongTrade", CalculationMode.Price, takeProfitPrice);
+
+                // Trailing stop
+                double trailingStopPrice = Position.AveragePrice + (atrValue * TrailingStopMultiplier);
+                SetTrailStop(CalculationMode.Price, trailingStopPrice);
+            }
+            else if (Position.MarketPosition == MarketPosition.Short)
+            {
+                double stopLossPrice = Position.AveragePrice + (atrValue * AtrMultiplierSL);
+                double takeProfitPrice = Position.AveragePrice - (atrValue * AtrMultiplierTP);
+                SetStopLoss("ShortTrade", CalculationMode.Price, stopLossPrice, false);
+                SetProfitTarget("ShortTrade", CalculationMode.Price, takeProfitPrice);
+
+                // Trailing stop
+                double trailingStopPrice = Position.AveragePrice - (atrValue * TrailingStopMultiplier);
+                SetTrailStop(CalculationMode.Price, trailingStopPrice);
+            }
+        }
+    }
+}
